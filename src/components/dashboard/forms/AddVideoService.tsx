@@ -8,12 +8,44 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PlusCircle } from 'lucide-react';
+import { PlusCircle, Pencil } from 'lucide-react';
 import { UNCOMPRESSED_PCM_AUDIO_CHANNEL_BANDWIDTH_MBPS, COMPRESSED_AUDIO_BITRATES_KBPS, HANDOFF_TYPES, VIDEO_CODEC_TYPES, VIDEO_MANUAL_DEFAULTS } from '@/lib/config';
-import type { VideoCodec, Service, VideoService } from '@/lib/types';
-import React, { useEffect, useMemo } from 'react';
+import type { AudioLayoutTrack, VideoCodec, Service, VideoService } from '@/lib/types';
+import React, { useEffect, useMemo, useState } from 'react';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { getSelectedNodeIdsForEdit, getServiceNodeIds, normalizeVideoCodec } from '@/lib/serviceEditPrefill';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+
+const MAX_AUDIO_TRACKS = 16;
+
+const createDefaultAudioLayout = (): AudioLayoutTrack[] =>
+    Array.from({ length: MAX_AUDIO_TRACKS }, (_, index) => {
+        const track = index + 1;
+        const level = Math.ceil(track / 2);
+        const group = Math.ceil(level / 2);
+        return {
+            track,
+            level,
+            group,
+            content: '',
+            notes: '',
+        };
+    });
+
+const normalizeAudioLayout = (incoming?: AudioLayoutTrack[]): AudioLayoutTrack[] => {
+    const defaults = createDefaultAudioLayout();
+    if (!incoming?.length) return defaults;
+    return defaults.map((defaultRow) => {
+        const match = incoming.find((row) => row.track === defaultRow.track);
+        if (!match) return defaultRow;
+        return {
+            ...defaultRow,
+            content: match.content ?? '',
+            notes: match.notes ?? '',
+        };
+    });
+};
 
 const videoServiceFormSchema = z.object({
     serviceType: z.literal('Video'),
@@ -38,6 +70,15 @@ const videoServiceFormSchema = z.object({
     audioMode: z.enum(['calculated', 'manual']).default('calculated'),
     manualAudioChannels: z.coerce.number().min(0).optional(),
     manualAudioBitrateKbps: z.coerce.number().min(0).optional(),
+    audioLayout: z.array(
+        z.object({
+            track: z.coerce.number().int().min(1).max(MAX_AUDIO_TRACKS),
+            level: z.coerce.number().int().min(1).max(8),
+            group: z.coerce.number().int().min(1).max(4),
+            content: z.string().default(''),
+            notes: z.string().optional(),
+        })
+    ).length(MAX_AUDIO_TRACKS),
 
 }).refine(data => data.sourceNodeId !== data.destinationNodeId, {
     message: 'Source and Destination cannot be the same.',
@@ -69,6 +110,8 @@ export default function AddVideoService({ serviceToEdit, onFinished, onDirtyChan
     const { activeEvent, activeCircuit, dispatch, lastJpegXsBitrate } = useEvent();
     const isEditMode = !!serviceToEdit;
     const videoServiceToEdit = serviceToEdit as VideoService;
+    const [audioLayoutDialogOpen, setAudioLayoutDialogOpen] = useState(false);
+    const [audioLayoutDraft, setAudioLayoutDraft] = useState<AudioLayoutTrack[]>(createDefaultAudioLayout());
     
     const defaultValues = useMemo<VideoServiceFormValues>(() => ({
         serviceType: 'Video',
@@ -90,6 +133,7 @@ export default function AddVideoService({ serviceToEdit, onFinished, onDirtyChan
         audioMode: 'calculated',
         manualAudioChannels: 2,
         manualAudioBitrateKbps: 128,
+        audioLayout: createDefaultAudioLayout(),
     }), [lastJpegXsBitrate]);
 
     const form = useForm<VideoServiceFormValues>({
@@ -135,6 +179,7 @@ export default function AddVideoService({ serviceToEdit, onFinished, onDirtyChan
                 manualAudioChannels: videoServiceToEdit.compressedAudio?.channels,
                 manualAudioBitrateKbps: videoServiceToEdit.compressedAudio?.bitratePerChannelKbps,
                 audioChannels: videoServiceToEdit.audioChannels,
+                audioLayout: normalizeAudioLayout(videoServiceToEdit.audioLayout),
                 bitrateMode: videoServiceToEdit.bitrateMode ?? 'video',
                 videoBandwidth: videoServiceToEdit.videoBandwidth,
                 transportStreamBandwidth: undefined,
@@ -154,16 +199,44 @@ export default function AddVideoService({ serviceToEdit, onFinished, onDirtyChan
                 form.setValue('sourceNodeId', formVals.sourceNodeId, { shouldValidate: false, shouldDirty: false });
                 form.setValue('destinationNodeId', formVals.destinationNodeId, { shouldValidate: false, shouldDirty: false });
             });
+        } else if (!isEditMode) {
+            form.setValue('audioLayout', createDefaultAudioLayout(), { shouldValidate: false, shouldDirty: false });
         }
     }, [isEditMode, videoServiceToEdit?.id, form, defaultValues]);
 
     const codec = form.watch('codec');
     const bitrateMode = form.watch('bitrateMode');
     const audioMode = form.watch('audioMode');
+    const audioChannels = form.watch('audioChannels');
+    const manualAudioChannels = form.watch('manualAudioChannels');
     const sourceNodeId = form.watch('sourceNodeId');
     const destinationNodeId = form.watch('destinationNodeId');
     const sourceEquipmentSelection = form.watch('sourceEquipmentId');
     const destinationEquipmentSelection = form.watch('destinationEquipmentId');
+    const audioLayout = form.watch('audioLayout');
+    const activeAudioChannels = Math.max(
+        0,
+        Math.min(MAX_AUDIO_TRACKS, Math.floor(audioMode === 'manual' ? (manualAudioChannels ?? 0) : (audioChannels ?? 0)))
+    );
+
+    const openAudioLayoutDialog = () => {
+        setAudioLayoutDraft(normalizeAudioLayout(audioLayout));
+        setAudioLayoutDialogOpen(true);
+    };
+
+    const updateAudioLayoutDraft = (track: number, field: 'content' | 'notes', value: string) => {
+        setAudioLayoutDraft((current) =>
+            current.map((row) => (row.track === track ? { ...row, [field]: value } : row))
+        );
+    };
+
+    const handleAudioLayoutSave = () => {
+        form.setValue('audioLayout', normalizeAudioLayout(audioLayoutDraft), {
+            shouldDirty: true,
+            shouldValidate: false,
+        });
+        setAudioLayoutDialogOpen(false);
+    };
 
     const sourceEquipment = React.useMemo(() => {
         if (!activeEvent?.equipment || !sourceNodeId) return [];
@@ -251,7 +324,7 @@ export default function AddVideoService({ serviceToEdit, onFinished, onDirtyChan
                 sourceCableNumber: '', destinationCableNumber: '', sourceEquipmentId: '', sourceEquipmentName: '',
                 destinationEquipmentId: '', destinationEquipmentName: '', bitrateMode: 'video',
                 videoBandwidth: lastJpegXsBitrate ?? 150, audioMode: 'calculated', manualAudioChannels: 2,
-                manualAudioBitrateKbps: 128
+                manualAudioBitrateKbps: 128, audioLayout: createDefaultAudioLayout()
             });
         }
     }
@@ -442,6 +515,23 @@ export default function AddVideoService({ serviceToEdit, onFinished, onDirtyChan
                                 />
                             </div>
                         )}
+                        <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+                            <div>
+                                <p className="text-sm font-medium">Embedded Audio Layout</p>
+                                <p className="text-xs text-muted-foreground">
+                                    {activeAudioChannels > 0
+                                        ? `Tracks 1-${activeAudioChannels} editable.`
+                                        : 'No editable tracks until channel count is above 0.'}
+                                    {activeAudioChannels < MAX_AUDIO_TRACKS
+                                        ? ` Tracks ${activeAudioChannels + 1}-${MAX_AUDIO_TRACKS} are locked.`
+                                        : ''}
+                                </p>
+                            </div>
+                            <Button type="button" variant="outline" onClick={openAudioLayoutDialog}>
+                                <Pencil className="mr-2 h-4 w-4" />
+                                Edit Audio Layout
+                            </Button>
+                        </div>
                     </>
                 </div>
 
@@ -616,6 +706,83 @@ export default function AddVideoService({ serviceToEdit, onFinished, onDirtyChan
                     {isEditMode ? 'Save Changes' : <><PlusCircle className="mr-2 h-4 w-4" /> Add Video Service</>}
                 </Button>
             </form>
+
+            <Dialog open={audioLayoutDialogOpen} onOpenChange={setAudioLayoutDialogOpen}>
+                <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Audio Layout</DialogTitle>
+                        <DialogDescription>
+                            Configure embedded audio tracks for this video service.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="rounded-md border">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead className="w-16">Group</TableHead>
+                                    <TableHead className="w-16">Level</TableHead>
+                                    <TableHead className="w-16">Track</TableHead>
+                                    <TableHead>Content</TableHead>
+                                    <TableHead>Notes</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {audioLayoutDraft.map((row, index) => {
+                                    const disabled = row.track > activeAudioChannels;
+                                    const prevRow = index > 0 ? audioLayoutDraft[index - 1] : null;
+                                    const isFirstGroupRow = !prevRow || prevRow.group !== row.group;
+                                    const isFirstLevelRow = !prevRow || prevRow.level !== row.level;
+                                    const groupRowSpan = isFirstGroupRow
+                                        ? audioLayoutDraft.filter((candidate) => candidate.group === row.group).length
+                                        : 0;
+                                    const levelRowSpan = isFirstLevelRow
+                                        ? audioLayoutDraft.filter((candidate) => candidate.level === row.level).length
+                                        : 0;
+                                    return (
+                                        <TableRow key={row.track} className={disabled ? 'bg-muted/50' : ''}>
+                                            {isFirstGroupRow && (
+                                                <TableCell rowSpan={groupRowSpan} className="font-mono align-middle">
+                                                    {row.group}
+                                                </TableCell>
+                                            )}
+                                            {isFirstLevelRow && (
+                                                <TableCell rowSpan={levelRowSpan} className="font-mono align-middle">
+                                                    {row.level}
+                                                </TableCell>
+                                            )}
+                                            <TableCell className="font-mono">{row.track}</TableCell>
+                                            <TableCell>
+                                                <Input
+                                                    value={row.content}
+                                                    onChange={(e) => updateAudioLayoutDraft(row.track, 'content', e.target.value)}
+                                                    disabled={disabled}
+                                                    placeholder={disabled ? 'Locked' : 'e.g. Host TVIS L'}
+                                                />
+                                            </TableCell>
+                                            <TableCell>
+                                                <Input
+                                                    value={row.notes ?? ''}
+                                                    onChange={(e) => updateAudioLayoutDraft(row.track, 'notes', e.target.value)}
+                                                    disabled={disabled}
+                                                    placeholder={disabled ? 'Locked' : 'Optional notes'}
+                                                />
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })}
+                            </TableBody>
+                        </Table>
+                    </div>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setAudioLayoutDialogOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button type="button" onClick={handleAudioLayoutSave}>
+                            Save layout
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </Form>
     );
 }

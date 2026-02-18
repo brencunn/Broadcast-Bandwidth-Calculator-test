@@ -41,6 +41,13 @@ export interface Segment {
 export type VideoCodec = (typeof VIDEO_CODEC_TYPES)[number];
 export type AudioType = (typeof AUDIO_TYPES)[number];
 export type HandoffType = (typeof HANDOFF_TYPES)[number];
+export interface AudioLayoutTrack {
+  track: number;
+  level: number;
+  group: number;
+  content: string;
+  notes?: string;
+}
 
 interface BaseService {
   id: string;
@@ -61,6 +68,7 @@ export interface VideoService extends BaseService {
   codec: VideoCodec;
   videoBandwidth: number;
   audioChannels: number;
+  audioLayout?: AudioLayoutTrack[];
   audioBitrate?: number;
   compressedAudio?: {
       channels: number;

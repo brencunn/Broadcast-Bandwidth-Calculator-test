@@ -160,6 +160,7 @@ function createService(payload: AddServicePayload, sourceEquipmentId?: string, d
                 codec: payload.codec,
                 videoBandwidth: calculatedVideoBandwidth > 0 ? calculatedVideoBandwidth : 0,
                 audioChannels: payload.audioChannels || 0,
+                audioLayout: payload.audioLayout,
                 audioBitrate: audioBwForCalc,
                 compressedAudio: compressedAudioConfig,
                 bitrateMode: payload.bitrateMode,
