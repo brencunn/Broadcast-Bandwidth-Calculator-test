@@ -18,6 +18,24 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const MAX_AUDIO_TRACKS = 16;
+const AUDIO_CONTENT_EXAMPLES: string[] = [
+    'Main Mix Lo',
+    'Main Mix Ro',
+    'CFX L',
+    'CFX R',
+    '5.1 Main Mix L',
+    '5.1 Main Mix R',
+    '5.1 Main Mix C',
+    '5.1 Main Mix Lfe',
+    '5.1 Main Mix Ls',
+    '5.1 Main Mix Rs',
+    'Dialogue Mix L',
+    'Dialogue Mix R',
+    'CFX L',
+    'CFX R',
+    'mute',
+    'mute',
+];
 
 const createDefaultAudioLayout = (): AudioLayoutTrack[] =>
     Array.from({ length: MAX_AUDIO_TRACKS }, (_, index) => {
@@ -756,7 +774,11 @@ export default function AddVideoService({ serviceToEdit, onFinished, onDirtyChan
                                                     value={row.content}
                                                     onChange={(e) => updateAudioLayoutDraft(row.track, 'content', e.target.value)}
                                                     disabled={disabled}
-                                                    placeholder={disabled ? 'Locked' : 'e.g. Host TVIS L'}
+                                                    placeholder={
+                                                        disabled
+                                                            ? 'Locked'
+                                                            : `e.g. ${AUDIO_CONTENT_EXAMPLES[row.track - 1] ?? ''}`
+                                                    }
                                                 />
                                             </TableCell>
                                             <TableCell>
